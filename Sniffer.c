@@ -1,22 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <arpa/inet.h>
-#include <netinet/ip.h>
-#include <netinet/tcp.h>
-#include <sys/socket.h>
-#include <errno.h>
-#include <unistd.h>
 #include <string.h>
-#include <pcap.h>
 #include <pcap/pcap.h>
-#include <time.h>
 #include <netinet/in.h>
-
-
-#include<netinet/ip_icmp.h>	//Provides declarations for icmp header
-#include<netinet/udp.h>	//Provides declarations for udp header
-#include<netinet/tcp.h>	//Provides declarations for tcp header
-#include<netinet/ip.h>
 
 #include "my_header.h"
 
@@ -24,7 +11,7 @@
 #define SIZE_ETHERNET 14
 
 
-void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *packet)
+void catch_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *packet)
 {
     int counter = 0;
     printf("TCP packet number %d\n" , ++counter);
@@ -42,7 +29,7 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 
     const struct hdr_ip *ip = (struct hdr_ip*)(packet + SIZE_ETHERNET);
 
-    u_int size_ip = IP_HL(ip)*4;
+    u_int size_ip = ip->ip_hdr_len*4;
 
     const struct hdr_tcp *tcp = (struct hdr_tcp*)(packet + SIZE_ETHERNET + size_ip);
 
@@ -60,8 +47,8 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
     fprintf(file ," » Source port: %d\n",ntohs(tcp->source_port));
     fprintf(file ," » Destination port: %d\n",ntohs(tcp->destination_port));
     fprintf(file ," » Sequence number: %d\n",ntohs(tcp->seq_num));
-    fprintf(file ," » Time stamp: %u\n",ntohl(info->timestamp));
-    fprintf(file ," » Total length: %u\n",ntohs(header->len));
+    fprintf(file ," » Time stamp: %u\n",info->timestamp);
+    fprintf(file ," » Total length: %u\n",header->len);
     fprintf(file ," » Cache flage: %u\n",info->cache_flag);
     fprintf(file ," » Steps flage: %u\n",info->steps_flag);
     fprintf(file ," » Type flag: %u\n",info->type_flag);
@@ -99,10 +86,10 @@ int main(){
     pcap_t *handle;
     char errbuf[PCAP_ERRBUF_SIZE];
     struct bpf_program fp;
-    char filter_exp[] = "proto TCP and dst port 9999 or src port 9999 or dst port 9998 or src port 9998"; /* The filter expression */
+    char filter[] = "proto TCP and dst port 9999 or src port 9999 or dst port 9998 or src port 9998"; /* The filter expression */
     bpf_u_int32 netmask;
     bpf_u_int32 srcip;
-    char nameDevice[] = "lo";
+    char nameDevice[] = "lo0";
 
 
     pcap_lookupnet(nameDevice, &srcip, &netmask, errbuf);
@@ -114,11 +101,12 @@ int main(){
         exit(1);
     }
 
-    pcap_compile(handle, &fp, filter_exp, 0, srcip);
+    pcap_compile(handle, &fp, filter, 0, srcip);
 
     pcap_setfilter(handle, &fp);
 
-    pcap_loop(handle, -1, got_packet, NULL);                
+    printf("\nStart sniffing TCP packet...\n");
+    pcap_loop(handle, -1, catch_packet, NULL);
 
     pcap_close(handle);
     return 0;

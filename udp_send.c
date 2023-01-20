@@ -40,11 +40,7 @@ int main()
     dest.sin_family = AF_INET;
     dest.sin_port = htons(PORT);
     dest.sin_addr.s_addr = inet_addr("127.0.0.1");
-    // Bind socket to IP and port
-//    if (bind(sock_ip, (struct sockaddr *) &server, sizeof(server)) < 0) {
-//        perror("Error binding socket to IP and port");
-//        return 1;
-//    }
+
     char packet[] = "hello world";
     int size = strlen(packet);
 

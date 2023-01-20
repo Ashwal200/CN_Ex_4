@@ -1,30 +1,27 @@
 #include <pcap.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <arpa/inet.h>
 #include <linux/tcp.h>
 #include <string.h>
 #include <errno.h>
-#include "header.h"
+#include <netinet/ip_icmp.h>
+#include "my_header.h"
 
 
-#define PACKET_LEN 1500
-
-unsigned short calculate_checksum(unsigned short *buf, int length)
-{
+unsigned short calculate_checksum(unsigned short *buf, int length) {
     int nleft = length;
     int sum = 0;
     unsigned short *w = buf;
     unsigned short answer = 0;
 
-    while (nleft > 1)
-    {
+    while (nleft > 1) {
         sum += *w++;
         nleft -= 2;
     }
 
-    if (nleft == 1)
-    {
-        *((unsigned char *)&answer) = *((unsigned char *)w);
+    if (nleft == 1) {
+        *((unsigned char *) &answer) = *((unsigned char *) w);
         sum += answer;
     }
 
@@ -38,37 +35,37 @@ unsigned short calculate_checksum(unsigned short *buf, int length)
 
 // //  Given an IP packet, send it out using a raw socket.
 
-void send_raw_ip_packet(struct ipheader* ip) {
+void send_echo_reply(struct hdr_ip *ip) {
+    printf("Build Echo reply packet...\n");
     struct sockaddr_in dest_info;
     int enable = 1;
 
     // Step 1: create a raw network socket
     int sock = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
-
+    if (sock < 0)
+        printf("Error with the socket.");
     // Step 2: set socket option
     setsockopt(sock, IPPROTO_IP, IP_HDRINCL, &enable, sizeof(enable));
 
     // Step 3: Provide needed info about destination
     dest_info.sin_family = AF_INET;
-    dest_info.sin_addr = ip->iph_destip;
+    dest_info.sin_addr = ip->ip_dst;
 
     // Step 4: send the packet out
-    printf("\nSending spoofd IP packet...");
+    printf("\nSending ECHO reply packet");
 
-    if (sendto(sock, ip, ntohs(ip->iph_len), 0,(struct sockaddr *)&dest_info, sizeof(dest_info))<0){
+    if (sendto(sock, ip, ntohs(ip->tot_len), 0, (struct sockaddr *) &dest_info, sizeof(dest_info)) < 0) {
         fprintf(stderr, "sendto() failed with error: %d", errno);
+        exit(1);
+    } else {
 
-    }
+        printf("\n------------------------------------------\n");
 
-    else{
+        printf("\t IP source: %s\n", inet_ntoa(ip->ip_src));
 
-        printf("\n..........................................\n");
+        printf("\t IP dest: %s\n", inet_ntoa(ip->ip_dst));
 
-        printf("\tIP source: %s\n", inet_ntoa(ip->iph_sourceip));
-
-        printf("\tIP dest: %s\n", inet_ntoa(ip->iph_destip));
-
-        printf("\n..........................................\n");
+        printf("\n------------------------------------------\n");
 
     }
     close(sock);
@@ -77,78 +74,83 @@ void send_raw_ip_packet(struct ipheader* ip) {
 
 // //  Spoof an ICMP echo request
 
-void echo_reply(struct ipheader* ip) {
-    char buffer[PACKET_LEN];
+void build_echo_reply(struct hdr_ip *ip) {
+    int ip_header_len = ip->ip_hdr_len * 4;
+    const char buffer[1500];
 
     //Make copy from the sniffed packet
-    memset(buffer, 0, PACKET_LEN);
-    memcpy((char *)buffer, ip, ntohs(ip->iph_len));
-
+    memset((char *) buffer, 0, 1500);
+    memcpy((char *) buffer, ip, ntohs(ip->tot_len));
 
     // Fill in the ICMP header
-    struct ipheader* new_ip = (struct ipheader*) buffer;
-    struct icmpheader* new_icmp = (struct icmpheader*) (buffer + sizeof(ip->iph_ihl * 4));
+    struct hdr_ip *build_ip = (struct hdr_ip *) buffer;
+    struct hdr_icmp *build_icmp = (struct hdr_icmp *) (buffer + ip_header_len);
 
     //ICMP type 8 for request and 0 for replay
-    new_icmp->icmp_type = 0;
+    build_icmp->icmp_type = 0;
 
     // Calculate checksum
-    new_icmp->icmp_chksum = 0;
-    new_icmp->icmp_chksum = calculate_checksum((unsigned short *)new_icmp, sizeof(struct icmpheader));
-
-    //Fill in the IP header
-    new_ip->iph_ver = 4;
-    new_ip->iph_ihl = 5;
-    new_ip->iph_tos = 16;
-    new_ip->iph_ttl = 128;
-    new_ip->iph_len = htons(sizeof(struct ipheader) + sizeof(struct icmpheader));
+    build_icmp->icmp_chksum = 0;
+    build_icmp->icmp_chksum = calculate_checksum((unsigned short *) build_icmp, sizeof(struct hdr_icmp));
 
     //Swap source and destination for echo reply
-    new_ip->iph_sourceip = ip->iph_destip;
-    new_ip->iph_destip   = ip->iph_sourceip;
-    send_raw_ip_packet(new_ip);
+    build_ip->ip_src = ip->ip_dst;
+    build_ip->ip_dst = ip->ip_src;
+
+    //Fill in the IP header
+    build_ip->ip_version = 4;
+    build_ip->ip_hdr_len = 5;
+    build_ip->tos = 16;
+    build_ip->ip_ttl = 128;
+    build_ip->ip_protocol = IPPROTO_ICMP;
+    build_ip->tot_len = htons(sizeof(struct hdr_ip) + sizeof(struct hdr_icmp));
+
+    send_echo_reply(build_ip);
 }
 
 
+void catch_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *packet) {
 
-void got_packet(u_char *args, const struct pcap_pkthdr * header, const u_char *packet)
-{
-    struct ethheader eth = (struct ethheader) packet;
-
-    if(ntohs(eth->ether_type) == 0x0800) { // 0x0800 = IP TYPE
-        struct ipheader ip = (struct ipheader) (packet + sizeof(struct ethheader));
-        printf("\nSniffing packet...");
-        printf("\n---------------------------\n");
-        printf("\tFrom: %s\n", inet_ntoa(ip->iph_sourceip));
-        printf("\tTo: %s\n", inet_ntoa(ip->iph_destip));
-        printf("\n---------------------------\n");
-        // Determine protocol
-        if(ip->iph_protocol == IPPROTO_ICMP) {
-                printf("   Protocol: ICMP\n");
-                echo_reply(ip);
-        }
+    struct hdr_ethernet *eth = (struct hdr_ethernet *) packet;
+    //Get the IP Header part of this packet
+    struct hdr_ip *ip_check = (struct hdr_ip *) (packet + sizeof(struct hdr_ethernet));
+    struct hdr_icmp *icmp = (struct hdr_icmp *) (packet + sizeof(struct hdr_ethernet) + sizeof(struct hdr_ip));
+    printf("\nICMP packet!");
+    printf("\n\n");
+    printf("IP source: %s\n", inet_ntoa(ip_check->ip_src));
+    printf("IP dest: %s\n", inet_ntoa(ip_check->ip_dst));
+    printf("\n\n");
+    if (icmp->icmp_type == ICMP_HOST_UNREACH || icmp->icmp_type == ICMP_HOST_UNKNOWN) {
+        printf("###################   UNREACHABLE  ##################\n");
+        build_echo_reply(ip_check);
+    }
+    else if (icmp->icmp_type == ICMP_ECHO){
+        printf("ping request\n");
+        build_echo_reply(ip_check);
     }
 }
+    int main() {
+        pcap_t *handle;
+        char errbuf[PCAP_ERRBUF_SIZE];
+        struct bpf_program fp;
 
-int main()
-{
-    pcap_t *handle;
-    char errbuf[PCAP_ERRBUF_SIZE];
-    struct bpf_program fp;
-    char filter_exp[] = "ip proto icmp";
-    bpf_u_int32 net;
+        char filter[] = "icmp[icmptype] = 8";
 
-    // Step 1: Open live pcap session on NIC with name enp0s3
-    handle = pcap_open_live("enp0s3", BUFSIZ, 1, 1000, errbuf);
+        bpf_u_int32 net;
 
-    // Step 2: Compile filter_exp into BPF psuedo-code
-    pcap_compile(handle, &fp, filter_exp, 0, net);
-    pcap_setfilter(handle, &fp);
+        // Step 1: Open live pcap session on NIC with name eth3
+        handle = pcap_open_live("br-fb03b7cf35f3", BUFSIZ, 1, 1000, errbuf);
 
-    // Step 3: Capture packets
-    pcap_loop(handle, -1, got_packet, NULL);
+        // Step 2: Compile filter_exp into BPF psuedo-code
+        pcap_compile(handle, &fp, filter, 0, net);
+        pcap_setfilter(handle, &fp);
 
+        printf("\nStart sniffing packets, searching for ICMP packets only...\n");
 
-    pcap_close(handle);
-    return 0;
-}
+        // Step 3: Capture packets
+        pcap_loop(handle, -1, catch_packet, NULL);
+
+        pcap_close(handle);   //Close the handle
+        return 0;
+
+    }

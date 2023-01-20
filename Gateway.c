@@ -26,6 +26,14 @@ struct sockaddr_in lst,sender;
 int main(int argc , char *argv[])
 {
 
+    if (argc < 2)
+    {
+        printf("There is no IP input.\n")
+        exit(1);
+    }
+    
+
+
     // Create socket
     sock_ip = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock_ip < 0) {
@@ -60,6 +68,7 @@ int main(int argc , char *argv[])
         perror("Error binding socket to IP and port");
         return 1;
     }
+        int counter = 0;
     while(1)
     {
 
@@ -71,21 +80,24 @@ int main(int argc , char *argv[])
             printf("Recvfrom error , failed to get packets\n");
             return 1;
         }
-        printf("Transfer the data to: %s\n" , argv[1]);
+        printf("\n\nRound number %d\n\n   Ready... \n\n   Fight !\n\n" , ++counter);
+
         double random_number = ((float)random())/((float)RAND_MAX);
         if (random_number > 0.5)
         {
             //Now process the packet
-            send_udp_packet(buffer , data_size , argv[1]);
             printf("The number is : %f ,you have lucky today!\n" , random_number);
-            printf("The gateway transfer the packet.\n");
+            send_udp_packet(buffer , data_size , argv[1]);
+            printf("Transfer the data to: %s\n" , argv[1]);
         }
         else{
             printf("The number is : %f ,you have bad luck today maybe next time!\n" , random_number);
         }
 
     }
-    //pclose(sock_any);
+    close(sock_any);
+    close(sock_ip);
+    
     printf("Finished");
     return 0;
 }
